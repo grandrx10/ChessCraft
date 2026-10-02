@@ -18,7 +18,7 @@ export default handler(async (uid, body) => {
     const now = Date.now();
 
     if (action === 'move') move(g, seat, { pieceId: String(body.pieceId), r, c }, now);
-    else if (action === 'spawn') spawn(g, seat, { type: String(body.type), r, c }, now);
+    else if (action === 'spawn') spawn(g, seat, { id: body.pieceId, type: String(body.type), r, c }, now);
     else throw new HttpError(400, 'action');
 
     tx.set(gameRef, g);

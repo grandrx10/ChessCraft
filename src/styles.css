@@ -111,15 +111,14 @@ button.wide { width: 100%; margin-top: 16px; padding: 12px; }
 }
 
 .board {
-  width: var(--size); height: var(--size);
-  display: grid; grid-template: repeat(8, 1fr) / repeat(8, 1fr);
+  width: var(--size); height: var(--size); flex: none;
+  display: grid; grid-template: repeat(8, minmax(0, 1fr)) / repeat(8, minmax(0, 1fr));
   border-radius: 8px; overflow: hidden;
   box-shadow: 0 10px 40px rgba(0,0,0,.45);
 }
-.sq { position: relative; display: grid; place-items: center; cursor: pointer; }
+.sq { position: relative; cursor: pointer; }
 .sq.light { background: var(--light); }
 .sq.dark { background: var(--dark); }
-.sq > *, .sq::before { grid-area: 1 / 1; }
 .sq.fog::after {
   content: ''; position: absolute; inset: 0;
   background: rgba(12, 14, 19, .72);
@@ -132,7 +131,7 @@ button.wide { width: 100%; margin-top: 16px; padding: 12px; }
 }
 .sq.sel::before { content: ''; position: absolute; inset: 0; background: rgba(91, 140, 255, .45); }
 .sq.target::before {
-  content: ''; width: 28%; height: 28%; border-radius: 50%;
+  content: ''; position: absolute; inset: 36%; border-radius: 50%;
   background: rgba(20, 24, 32, .32);
 }
 .sq.capture::before {
@@ -146,29 +145,12 @@ button.wide { width: 100%; margin-top: 16px; padding: 12px; }
 }
 @keyframes glow { 50% { opacity: .45; } }
 
-.piece {
-  position: relative; z-index: 1;
-  font-family: 'Noto Sans Symbols 2', 'Segoe UI Symbol', sans-serif;
-  font-size: calc(var(--size) / 8 * .78);
-  line-height: 1;
-  pointer-events: none;
-}
-.piece.white { color: #fafafa; text-shadow: 0 0 1px #000, 0 0 1px #000, 0 1px 2px rgba(0,0,0,.6); }
-.piece.black { color: #14161b; text-shadow: 0 0 1px #fff, 0 1px 2px rgba(255,255,255,.25); }
-.svgp { width: 74%; height: 74%; overflow: visible; }
-.svgp .fillc { stroke-width: 2.2; stroke-linejoin: round; }
-.svgp .ring { fill: none; stroke-width: 2; }
-.svgp .pole { fill: none; stroke-width: 3; stroke-linecap: round; }
-.svgp.white .fillc { fill: #fafafa; stroke: #111; }
-.svgp.white .ring { stroke: #111; }
-.svgp.white .pole { stroke: #111; }
-.svgp.black .fillc { fill: #14161b; stroke: #eee; }
-.svgp.black .ring { stroke: #eee; }
-.svgp.black .pole { stroke: #14161b; filter: drop-shadow(0 0 1px #fff); }
+.piece { display: block; pointer-events: none; }
+.sq > .piece { position: absolute; z-index: 1; inset: 6%; width: 88%; height: 88%; }
 
 /* Cooldown ring */
 .cd {
-  position: relative; z-index: 2; width: 92%; height: 92%;
+  position: absolute; z-index: 2; inset: 4%; width: 92%; height: 92%;
   pointer-events: none; transform: rotate(-90deg);
   animation: cdout 600ms ease-out forwards;
 }
@@ -189,8 +171,7 @@ button.wide { width: 100%; margin-top: 16px; padding: 12px; }
   display: flex; align-items: center; gap: 6px;
   padding: 6px 12px 6px 8px; background: var(--panel);
 }
-.unit .piece { font-size: 30px; }
-.unit .svgp { width: 30px; height: 30px; }
+.unit .piece { width: 32px; height: 32px; }
 .unit .cost { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); }
 .unit.on { border-color: var(--green); background: rgba(61, 214, 140, .12); }
 .unit.on .cost { color: var(--green); }

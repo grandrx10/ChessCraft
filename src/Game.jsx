@@ -1,25 +1,38 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db, api, serverNow } from './firebase.js';
 import { go } from './ui.jsx';
 import Piece from './Piece.jsx';
+import { applyPending, newPieceId, settled } from './optimistic.js';
 import {
   COST, COOLDOWN, SPAWNABLE, moves, visibility, spawnSquares, inCheck, pointsAt, pieceAt,
 } from '../shared/game.js';
 
 export default function Game({ id, uid }) {
-  const [view, setView] = useState(null);
+  const [serverView, setServerView] = useState(null);
+  const [pending, setPending] = useState([]);
   const [sel, setSel] = useState(null); // piece id
   const [spawnType, setSpawnType] = useState(null);
   const [, tick] = useState(0);
+  const latest = useRef(null);
 
-  useEffect(() => onSnapshot(doc(db, 'games', id, 'views', uid), (s) => s.exists() && setView(s.data())), [id, uid]);
+  useEffect(() => onSnapshot(doc(db, 'games', id, 'views', uid), (s) => {
+    if (!s.exists()) return;
+    const v = s.data();
+    latest.current = v;
+    setServerView(v);
+    // Drop acknowledged actions the server view now reflects.
+    setPending((ps) => ps.filter((a) => !(a.acked && settled(v.pieces, a))));
+  }), [id, uid]);
+
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 100);
     const esc = (e) => e.key === 'Escape' && (setSel(null), setSpawnType(null));
     addEventListener('keydown', esc);
     return () => { clearInterval(t); removeEventListener('keydown', esc); };
   }, []);
+
+  const view = useMemo(() => serverView && applyPending(serverView, pending), [serverView, pending]);
 
   const derived = useMemo(() => {
     if (!view) return null;
@@ -44,19 +57,28 @@ export default function Game({ id, uid }) {
   const spawnSet = spawnType && !ended ? spawnSquares(pieces, seat, spawnType) : [];
   const has = (list, r, c) => list.some((m) => m.r === r && m.c === c);
 
-  const act = (body) => api('game', { id, ...body }).catch(() => {});
+  // Apply locally right away; on rejection drop it (rollback), on success keep it until a snapshot reflects it.
+  const act = (action) => {
+    const a = { ...action, at: serverNow(), acked: false };
+    setPending((ps) => [...ps, a]);
+    api('game', { id, action: a.kind, pieceId: a.pieceId, type: a.type, r: a.r, c: a.c })
+      .then(() => setPending((ps) => ps
+        .map((x) => (x === a ? { ...x, acked: true } : x))
+        .filter((x) => !(x.acked && latest.current && settled(latest.current.pieces, x)))))
+      .catch(() => setPending((ps) => ps.filter((x) => x !== a)));
+  };
 
   const onSquare = (r, c) => {
     if (ended) return;
     if (spawnType) {
       if (has(spawnSet, r, c)) {
-        act({ action: 'spawn', type: spawnType, r, c });
+        act({ kind: 'spawn', pieceId: newPieceId(), type: spawnType, r, c });
         if (points - COST[spawnType] < COST[spawnType]) setSpawnType(null);
       } else setSpawnType(null);
       return;
     }
     if (selPiece && has(targets, r, c)) {
-      act({ action: 'move', pieceId: selPiece.id, r, c });
+      act({ kind: 'move', pieceId: selPiece.id, mv: (selPiece.mv || 0) + 1, r, c });
       setSel(null);
       return;
     }
@@ -85,7 +107,7 @@ export default function Game({ id, uid }) {
       squares.push(
         <div key={`${r}-${c}`} className={cls} onMouseDown={() => onSquare(r, c)}>
           {p && <Piece type={p.type} owner={p.owner} />}
-          {p && p.owner === seat && now < p.readyAt + 800 && <Cooldown key={p.readyAt} readyAt={p.readyAt} />}
+          {p && p.owner === seat && now < p.readyAt + 800 && <Cooldown key={`${p.id}:${p.mv || 0}`} readyAt={p.readyAt} />}
         </div>,
       );
     }
@@ -122,6 +144,7 @@ export default function Game({ id, uid }) {
 }
 
 // Red ring fills over the cooldown, flashes green when ready, then fades.
+// Keyed by piece id + move count, so a server confirmation doesn't restart it.
 function Cooldown({ readyAt }) {
   const [remain] = useState(() => readyAt - serverNow());
   if (remain <= -700) return null;

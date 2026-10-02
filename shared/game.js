@@ -3,8 +3,8 @@
 
 export const COST = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, coin: 3, garrison: 3 };
 export const SPAWNABLE = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'coin', 'garrison'];
-export const COOLDOWN = 3000;
-export const INCOME_MS = 5000;
+export const COOLDOWN = 5000;
+export const INCOME_MS = 10000;
 export const VISION = 4;
 export const SPAWN_RADIUS = 2;
 export const SLIDE = 4;
@@ -100,6 +100,24 @@ export function inCheck(pieces, seat) {
   const king = pieces.find((p) => p.owner === seat && p.type === 'king');
   if (!king) return false;
   return pieces.some((p) => p.owner !== seat && moves(p, pieces).some((m) => m.r === king.r && m.c === king.c));
+}
+
+// Client-chosen piece ids, so optimistic spawns and confirmed spawns share an id.
+export const validPieceId = (id) => typeof id === 'string' && /^c[a-z0-9]{8,12}$/.test(id);
+
+export function makePiece(id, type, seat, r, c, now) {
+  const piece = { id, type, owner: seat, r, c, readyAt: now + COOLDOWN, mv: 0 };
+  if (type === 'pawn' && (r === backRank(seat) || r === backRank(seat) + forward(seat))) piece.dbl = true;
+  return piece;
+}
+
+// Result of moving p to (r, c): the moved piece and whatever it captured.
+export function resolveMove(pieces, p, r, c, now) {
+  const target = pieceAt(pieces, r, c);
+  const moved = { ...p, r, c, readyAt: now + COOLDOWN, mv: (p.mv || 0) + 1 };
+  delete moved.dbl;
+  if (moved.type === 'pawn' && r === lastRank(p.owner)) moved.type = 'queen';
+  return { moved, target };
 }
 
 // Income sources: king + coins, 1 point per INCOME_MS each.

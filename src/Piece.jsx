@@ -1,25 +1,28 @@
 import React from 'react';
+import SVGS from './pieceSvgs.js';
 
-const GLYPH = { king: '♚', queen: '♛', rook: '♜', bishop: '♝', knight: '♞', pawn: '♟︎' };
-
+// Coin and garrison are drawn in the same style as the cburnett set (45×45, 1.5 stroke).
 export default function Piece({ type, owner }) {
-  const cls = `piece ${owner === 0 ? 'white' : 'black'}`;
+  const color = owner === 0 ? 'white' : 'black';
+  const fill = owner === 0 ? '#fff' : '#000';
+  const detail = owner === 0 ? '#000' : '#fff';
   if (type === 'coin') {
     return (
-      <svg className={`${cls} svgp`} viewBox="0 0 40 40">
-        <circle cx="20" cy="20" r="12" className="fillc" />
-        <circle cx="20" cy="20" r="7.5" className="ring" />
+      <svg className="piece" viewBox="0 0 45 45">
+        <circle cx="22.5" cy="22.5" r="13" fill={fill} stroke="#000" strokeWidth="1.5" />
+        <circle cx="22.5" cy="22.5" r="8.5" fill="none" stroke={detail} strokeWidth="1.5" />
+        <path d="M22.5 17.5v10" stroke={detail} strokeWidth="1.5" strokeLinecap="round" />
       </svg>
     );
   }
   if (type === 'garrison') {
     return (
-      <svg className={`${cls} svgp`} viewBox="0 0 40 40">
-        <path d="M12 33 V7" className="pole" />
-        <path d="M13 8 H30 L25.5 14 L30 20 H13 Z" className="fillc" />
-        <path d="M8 33 H20" className="pole" />
+      <svg className="piece" viewBox="0 0 45 45">
+        <path d="M15.5 37.5V8" stroke="#000" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M16.5 9h18l-5 6.5 5 6.5h-18z" fill={fill} stroke="#000" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M11 37.5h12" stroke="#000" strokeWidth="2.5" strokeLinecap="round" />
       </svg>
     );
   }
-  return <span className={cls}>{GLYPH[type]}</span>;
+  return <img className="piece" src={SVGS[`${color}_${type}`]} alt="" draggable="false" />;
 }

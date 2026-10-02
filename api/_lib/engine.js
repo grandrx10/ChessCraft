@@ -1,12 +1,15 @@
 // Server-authoritative game mutations. Pure functions over a plain game object.
 import {
-  COST, COOLDOWN, START_POINTS, INCOME_MS,
-  moves, spawnSquares, incomeRate, visibility, backRank, lastRank, forward,
+  COST, START_POINTS, INCOME_MS,
+  moves, spawnSquares, incomeRate, visibility, backRank, makePiece, resolveMove, validPieceId,
 } from '../../shared/game.js';
 
 export class RuleError extends Error {
   constructor(msg) { super(msg); this.status = 400; }
 }
+
+// Client clocks run up to ~one-way latency ahead of the server's view of an action.
+const COOLDOWN_SLACK = 250;
 
 const list = (g) => Object.values(g.pieces);
 
@@ -14,7 +17,7 @@ export function newGame(players, now, rand = Math.random) {
   const pieces = {};
   players.forEach((_, seat) => {
     const id = `k${seat}`;
-    pieces[id] = { id, type: 'king', owner: seat, r: backRank(seat), c: rand() < 0.5 ? 0 : 7, readyAt: now };
+    pieces[id] = { id, type: 'king', owner: seat, r: backRank(seat), c: rand() < 0.5 ? 0 : 7, readyAt: now, mv: 0 };
   });
   return {
     players: players.map((p) => p.uid),
@@ -23,7 +26,6 @@ export function newGame(players, now, rand = Math.random) {
     econ: players.map(() => ({ p: START_POINTS, t: now })),
     status: 'playing',
     winner: null,
-    next: 1,
     startedAt: now,
   };
 }
@@ -37,37 +39,31 @@ function settle(g, now) {
   });
 }
 
-export function spawn(g, seat, { type, r, c }, now) {
+export function spawn(g, seat, { id, type, r, c }, now) {
   if (g.status !== 'playing') throw new RuleError('over');
   if (!(type in COST)) throw new RuleError('type');
+  if (!validPieceId(id) || g.pieces[id]) throw new RuleError('id');
   settle(g, now);
   if (g.econ[seat].p < COST[type]) throw new RuleError('points');
   if (!spawnSquares(list(g), seat, type).some((s) => s.r === r && s.c === c)) throw new RuleError('square');
   g.econ[seat].p -= COST[type];
-  const id = `p${g.next++}`;
-  const piece = { id, type, owner: seat, r, c, readyAt: now + COOLDOWN };
-  if (type === 'pawn' && (r === backRank(seat) || r === backRank(seat) + forward(seat))) piece.dbl = true;
-  g.pieces[id] = piece;
+  g.pieces[id] = makePiece(id, type, seat, r, c, now);
 }
 
 export function move(g, seat, { pieceId, r, c }, now) {
   if (g.status !== 'playing') throw new RuleError('over');
   const p = g.pieces[pieceId];
   if (!p || p.owner !== seat) throw new RuleError('piece');
-  if (now < p.readyAt - 100) throw new RuleError('cooldown');
+  if (now < p.readyAt - COOLDOWN_SLACK) throw new RuleError('cooldown');
   const ps = list(g);
   if (!moves(p, ps).some((m) => m.r === r && m.c === c)) throw new RuleError('illegal');
   settle(g, now);
-  const target = ps.find((q) => q.r === r && q.c === c);
+  const { moved, target } = resolveMove(ps, p, r, c, now);
   if (target) {
     delete g.pieces[target.id];
     if (target.type === 'king') { g.status = 'ended'; g.winner = seat; }
   }
-  p.r = r;
-  p.c = c;
-  p.readyAt = now + COOLDOWN;
-  delete p.dbl;
-  if (p.type === 'pawn' && r === lastRank(seat)) p.type = 'queen';
+  g.pieces[p.id] = moved;
 }
 
 // What one seat is allowed to see. Everything is revealed once the game ends.
