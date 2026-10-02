@@ -16,13 +16,19 @@ export default function Game({ id, uid }) {
   const [, tick] = useState(0);
   const latest = useRef(null);
 
-  useEffect(() => onSnapshot(doc(db, 'games', id, 'views', uid), (s) => {
-    if (!s.exists()) return;
-    const v = s.data();
+  // Server views arrive from the listener and from API responses; keep whichever is newest.
+  const accept = (v) => {
+    if (!v || (latest.current && (v.ver || 0) < (latest.current.ver || 0))) return;
     latest.current = v;
     setServerView(v);
-    // Drop acknowledged actions the server view now reflects.
-    setPending((ps) => ps.filter((a) => !(a.acked && settled(v.pieces, a))));
+  };
+  // Drop acknowledged actions the newest server view already reflects.
+  const prune = (ps) => ps.filter((a) => !(a.acked && latest.current && settled(latest.current.pieces, a)));
+
+  useEffect(() => onSnapshot(doc(db, 'games', id, 'views', uid), (s) => {
+    if (!s.exists()) return;
+    accept(s.data());
+    setPending(prune);
   }), [id, uid]);
 
   useEffect(() => {
@@ -57,15 +63,21 @@ export default function Game({ id, uid }) {
   const spawnSet = spawnType && !ended ? spawnSquares(pieces, seat, spawnType) : [];
   const has = (list, r, c) => list.some((m) => m.r === r && m.c === c);
 
-  // Apply locally right away; on rejection drop it (rollback), on success keep it until a snapshot reflects it.
+  // Apply locally right away. Either way the response carries the server's current view:
+  // on success it already includes the action; on rejection the action is dropped (rollback onto that view).
   const act = (action) => {
     const a = { ...action, at: serverNow(), acked: false };
     setPending((ps) => [...ps, a]);
     api('game', { id, action: a.kind, pieceId: a.pieceId, type: a.type, r: a.r, c: a.c })
-      .then(() => setPending((ps) => ps
-        .map((x) => (x === a ? { ...x, acked: true } : x))
-        .filter((x) => !(x.acked && latest.current && settled(latest.current.pieces, x)))))
-      .catch(() => setPending((ps) => ps.filter((x) => x !== a)));
+      .then((res) => {
+        accept(res.view);
+        setPending((ps) => prune(ps.map((x) => (x === a ? { ...x, acked: true } : x))));
+      })
+      .catch((err) => {
+        console.warn('rejected', a.kind, err.message);
+        accept(err.data?.view);
+        setPending((ps) => ps.filter((x) => x !== a));
+      });
   };
 
   const onSquare = (r, c) => {

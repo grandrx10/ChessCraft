@@ -16,7 +16,7 @@ export const db = getFirestore();
 const auth = getAuth();
 
 export class HttpError extends Error {
-  constructor(status, msg) { super(msg); this.status = status; }
+  constructor(status, msg, extra) { super(msg); this.status = status; this.extra = extra; }
 }
 
 async function uidFrom(req) {
@@ -39,7 +39,7 @@ export function handler(fn) {
       res.status(200).json({ ok: true, ...out, now: Date.now() });
     } catch (e) {
       if (!e.status) console.error(e);
-      res.status(e.status || 500).json({ ok: false, error: e.status ? e.message : 'server', now: Date.now() });
+      res.status(e.status || 500).json({ ok: false, error: e.status ? e.message : 'server', ...e.extra, now: Date.now() });
     }
   };
 }

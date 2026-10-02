@@ -41,7 +41,7 @@ export async function api(path, body) {
   const t1 = Date.now();
   const json = await res.json().catch(() => ({ ok: false, error: 'network' }));
   if (json.now) offset = json.now - (t0 + t1) / 2;
-  if (!json.ok) throw new Error(json.error || 'error');
+  if (!json.ok) throw Object.assign(new Error(json.error || 'error'), { data: json });
   return json;
 }
 

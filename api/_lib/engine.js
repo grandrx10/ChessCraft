@@ -79,5 +79,6 @@ export function viewFor(g, seat) {
     rate: incomeRate(ps, seat),
     status: g.status,
     winner: g.winner,
+    ver: g.ver || 0,
   };
 }
