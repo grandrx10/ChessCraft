@@ -29,17 +29,19 @@ async function uidFrom(req) {
   }
 }
 
-// Wraps a POST handler: verifies the Firebase ID token and stamps server time on every response.
+const BUILD = process.env.VERCEL_GIT_COMMIT_SHA || 'dev';
+
+// Wraps a POST handler: verifies the Firebase ID token and stamps server time + build on every response.
 export function handler(fn) {
   return async (req, res) => {
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method' });
     try {
       const uid = await uidFrom(req);
       const out = await fn(uid, req.body || {});
-      res.status(200).json({ ok: true, ...out, now: Date.now() });
+      res.status(200).json({ ok: true, ...out, now: Date.now(), build: BUILD });
     } catch (e) {
       if (!e.status) console.error(e);
-      res.status(e.status || 500).json({ ok: false, error: e.status ? e.message : 'server', ...e.extra, now: Date.now() });
+      res.status(e.status || 500).json({ ok: false, error: e.status ? e.message : 'server', ...e.extra, now: Date.now(), build: BUILD });
     }
   };
 }

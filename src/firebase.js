@@ -41,8 +41,22 @@ export async function api(path, body) {
   const t1 = Date.now();
   const json = await res.json().catch(() => ({ ok: false, error: 'network' }));
   if (json.now) offset = json.now - (t0 + t1) / 2;
+  reloadIfStale(json.build);
   if (!json.ok) throw Object.assign(new Error(json.error || 'error'), { data: json });
   return json;
+}
+
+// A tab opened before a deploy runs old rules against the new server; reload onto the new build.
+// Game state lives on the server and the room is in the URL hash, so nothing is lost.
+// Reload at most once per server build, in case a cache keeps serving the old bundle.
+function reloadIfStale(build) {
+  /* global __BUILD__ */
+  if (!build || build === __BUILD__) return;
+  try {
+    if (sessionStorage.getItem('cc-reloaded-for') === build) return;
+    sessionStorage.setItem('cc-reloaded-for', build);
+  } catch { return; }
+  location.reload();
 }
 
 export const storedName = {

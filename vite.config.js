@@ -31,5 +31,7 @@ function localApi() {
 
 export default defineConfig({
   plugins: [react(), localApi()],
+  // Must match the server's BUILD (api/_lib/admin.js) so the client can detect version skew.
+  define: { __BUILD__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA || 'dev') },
   ssr: { external: ['firebase-admin'] },
 });

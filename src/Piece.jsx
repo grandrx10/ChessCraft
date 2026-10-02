@@ -32,5 +32,7 @@ export default function Piece({ type, owner }) {
       </svg>
     );
   }
-  return <img className="piece" src={SVGS[`${color}_${type}`]} alt="" draggable="false" />;
+  const src = SVGS[`${color}_${type}`];
+  if (!src) return null;
+  return <img className="piece" src={src} alt="" draggable="false" />;
 }
