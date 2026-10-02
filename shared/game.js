@@ -67,6 +67,19 @@ export function moves(p, pieces) {
       }
       break;
     }
+    case 'superpawn': {
+      // Promoted pawn: steps one square orthogonally onto empty squares, captures one square diagonally.
+      for (const [dr, dc] of ORTH) {
+        const r = p.r + dr, c = p.c + dc;
+        if (inBounds(r, c) && !g.get(r * 8 + c)) out.push({ r, c });
+      }
+      for (const [dr, dc] of DIAG) {
+        const r = p.r + dr, c = p.c + dc;
+        const q = inBounds(r, c) && g.get(r * 8 + c);
+        if (q && q.owner !== p.owner) out.push({ r, c });
+      }
+      break;
+    }
     default: break; // garrison: stationary
   }
   return out;
@@ -116,7 +129,7 @@ export function resolveMove(pieces, p, r, c, now) {
   const target = pieceAt(pieces, r, c);
   const moved = { ...p, r, c, readyAt: now + COOLDOWN, mv: (p.mv || 0) + 1 };
   delete moved.dbl;
-  if (moved.type === 'pawn' && r === lastRank(p.owner)) moved.type = 'queen';
+  if (moved.type === 'pawn' && r === lastRank(p.owner)) moved.type = 'superpawn';
   return { moved, target };
 }
 

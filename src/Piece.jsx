@@ -24,5 +24,13 @@ export default function Piece({ type, owner }) {
       </svg>
     );
   }
+  if (type === 'superpawn') {
+    return (
+      <svg className="piece" viewBox="0 0 45 45">
+        <image href={SVGS[`${color}_pawn`]} width="45" height="45" />
+        <path d="M16 10.5 14.8 2.5l4.1 3.6 3.6-5.1 3.6 5.1 4.1-3.6-1.2 8z" fill={fill} stroke="#000" strokeWidth="1.3" strokeLinejoin="round" />
+      </svg>
+    );
+  }
   return <img className="piece" src={SVGS[`${color}_${type}`]} alt="" draggable="false" />;
 }

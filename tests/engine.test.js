@@ -75,7 +75,25 @@ test('pawn far from back ranks has no double step; promotes on last rank', () =>
   assert.ok(!pawn.dbl);
   assert.throws(() => spawn(g, 0, { type: 'pawn', r: 0, c: 5 }, 0), /square/);
   move(g, 0, { pieceId: pawn.id, r: 0, c: 4 }, COOLDOWN);
-  assert.equal(g.pieces[pawn.id].type, 'queen');
+  assert.equal(g.pieces[pawn.id].type, 'superpawn');
+});
+
+test('superpawn: one step orthogonally onto empty squares, captures one step diagonally', () => {
+  const sp = { id: 's', type: 'superpawn', owner: 0, r: 3, c: 3 };
+  const pieces = [
+    sp,
+    { id: 'e1', type: 'rook', owner: 1, r: 2, c: 3 }, // directly above: blocks, not capturable
+    { id: 'e2', type: 'rook', owner: 1, r: 4, c: 4 }, // diagonal: capturable
+    { id: 'f1', type: 'rook', owner: 0, r: 2, c: 2 }, // own piece diagonal: not capturable
+  ];
+  const ms = moves(sp, pieces);
+  assert.deepEqual(
+    ms.map((m) => `${m.r}${m.c}`).sort(),
+    ['32', '34', '43', '44'],
+  );
+  // Gives check like any attacker.
+  pieces.push({ id: 'k', type: 'king', owner: 1, r: 2, c: 4 });
+  assert.ok(inCheck(pieces, 1));
 });
 
 test('fog hides distant enemies; capturing king ends game', () => {
