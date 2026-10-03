@@ -1,6 +1,6 @@
 // Server-authoritative game mutations. Pure functions over a plain game object.
 import {
-  START_POINTS, costOf, boardSize, perimeterStarts,
+  START_POINTS, costOf, boardSize, randomStarts,
   moves, spawnSquares, incomeRate, visibility, backRank, makePiece, resolveMove, validPieceId,
 } from '../../shared/game.js';
 
@@ -19,13 +19,8 @@ export function newGame(players, now, mode = '1v1', rand = Math.random) {
   const size = boardSize(mode, n);
   let starts;
   if (mode === 'FFA') {
-    // Shuffle who gets which slot so seating isn't join order.
-    const slots = perimeterStarts(n, size, rand);
-    for (let i = slots.length - 1; i > 0; i--) {
-      const j = Math.floor(rand() * (i + 1));
-      [slots[i], slots[j]] = [slots[j], slots[i]];
-    }
-    starts = slots;
+    // Random squares, kings at least START_GAP apart; everyone sees the board the same way up.
+    starts = randomStarts(n, size, rand).map((s) => ({ ...s, home: 0 }));
   } else {
     starts = players.map((_, seat) => ({
       r: backRank(seat, size), c: rand() < 0.5 ? 0 : size - 1, home: seat === 0 ? 0 : 2,

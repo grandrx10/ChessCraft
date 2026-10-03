@@ -154,32 +154,28 @@ export function incomeRate(pieces, seat) {
 
 export const pointsAt = (econ, rate, now) => econ.p + Math.max(0, now - econ.t) * rate;
 
-// FFA starts: kings evenly spaced around the perimeter (random rotation), each with the edge it
-// started on as "home" (0 bottom, 1 left, 2 top, 3 right) so its view can be rotated.
-export function perimeterStarts(n, size, rand = Math.random) {
-  const ring = [];
-  for (let c = 0; c < size - 1; c++) ring.push({ r: 0, c, home: 2 });
-  for (let r = 0; r < size - 1; r++) ring.push({ r, c: size - 1, home: 3 });
-  for (let c = size - 1; c > 0; c--) ring.push({ r: size - 1, c, home: 0 });
-  for (let r = size - 1; r > 0; r--) ring.push({ r, c: 0, home: 1 });
-  const L = ring.length;
-  const spread = (s) => {
-    let min = Infinity;
-    for (let i = 0; i < s.length; i++) for (let j = i + 1; j < s.length; j++) min = Math.min(min, dist(s[i], s[j]));
-    return min;
-  };
-  // Even spacing along the ring can bunch two kings around a corner, so search random
-  // rotations with each king nudged up to one square either way; keep the most spread out.
-  let best = null;
-  let bestSpread = -1;
-  for (let trial = 0; trial < 300; trial++) {
-    const offset = rand() * L;
-    const idx = Array.from({ length: n }, (_, i) => Math.floor(offset + (i * L) / n) + (trial ? Math.floor(rand() * 3) - 1 : 0));
-    const s = idx.map((x) => ring[((x % L) + L) % L]);
-    const sp = spread(s);
-    if (sp > bestSpread) { best = s; bestSpread = sp; }
+export const START_GAP = 5;
+
+// FFA starts: kings anywhere on the board, every pair at least START_GAP apart (same metric as vision).
+// Random placement with restarts; a fixed lattice is the fallback, which always fits (one king per
+// START_GAP×START_GAP block, and the board has at least as many blocks as players).
+export function randomStarts(n, size, rand = Math.random) {
+  const cell = () => ({ r: Math.floor(rand() * size), c: Math.floor(rand() * size) });
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const placed = [];
+    for (let tries = 0; placed.length < n && tries < 500; tries++) {
+      const p = cell();
+      if (placed.every((q) => dist(p, q) >= START_GAP)) placed.push(p);
+    }
+    if (placed.length === n) return placed;
   }
-  return best;
+  const lattice = [];
+  for (let r = 0; r < size; r += START_GAP) for (let c = 0; c < size; c += START_GAP) lattice.push({ r, c });
+  for (let i = lattice.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [lattice[i], lattice[j]] = [lattice[j], lattice[i]];
+  }
+  return lattice.slice(0, n);
 }
 
 // Maps a display cell (dr, dc) to a board cell for a viewer whose home edge is shown at the bottom.

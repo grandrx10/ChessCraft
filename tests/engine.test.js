@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newGame, spawn as rawSpawn, move, viewFor, rulesOf } from '../api/_lib/engine.js';
 import {
-  moves, inCheck, pointsAt, costOf, toBoard, perimeterStarts, boardSize,
+  moves, inCheck, pointsAt, costOf, toBoard, randomStarts, boardSize, dist, START_GAP,
   COOLDOWN, KING_INCOME_MS, COIN_INCOME_MS,
 } from '../shared/game.js';
 import { applyPending, settled, newPieceId } from '../src/optimistic.js';
@@ -140,21 +140,40 @@ test('FFA board grows by one per player beyond 2', () => {
   assert.equal(newGame(players(5), 0, 'FFA').size, 11);
 });
 
-test('FFA kings start on distinct edge squares, well apart', () => {
+const assertSpread = (s, k, size) => {
+  assert.equal(s.length, k);
+  for (const p of s) assert.ok(p.r >= 0 && p.c >= 0 && p.r < size && p.c < size);
+  for (let i = 0; i < k; i++) {
+    for (let j = i + 1; j < k; j++) assert.ok(dist(s[i], s[j]) >= START_GAP, `k=${k}`);
+  }
+};
+
+test('FFA kings start at random squares, every pair at least 5 apart', () => {
+  let interior = 0;
   for (let k = 2; k <= 8; k++) {
     const size = boardSize('FFA', k);
-    for (let trial = 0; trial < 20; trial++) {
-      const s = perimeterStarts(k, size);
-      const keys = new Set(s.map((p) => `${p.r},${p.c}`));
-      assert.equal(keys.size, k);
-      for (const p of s) assert.ok(p.r === 0 || p.c === 0 || p.r === size - 1 || p.c === size - 1);
-      for (let i = 0; i < k; i++) {
-        for (let j = i + 1; j < k; j++) {
-          assert.ok(Math.max(Math.abs(s[i].r - s[j].r), Math.abs(s[i].c - s[j].c)) >= 5, `k=${k}`);
-        }
-      }
+    for (let trial = 0; trial < 50; trial++) {
+      const s = randomStarts(k, size);
+      assertSpread(s, k, size);
+      interior += s.filter((p) => p.r > 0 && p.c > 0 && p.r < size - 1 && p.c < size - 1).length;
     }
   }
+  assert.ok(interior > 0, 'kings are not limited to the edge');
+});
+
+test('FFA start fallback still satisfies the gap when random placement keeps failing', () => {
+  for (let k = 2; k <= 8; k++) {
+    const size = boardSize('FFA', k);
+    assertSpread(randomStarts(k, size, () => 0), k, size); // every random pick collides
+  }
+});
+
+test('FFA orientation is the same for every player', () => {
+  const g = newGame(players(6), 0, 'FFA');
+  assert.ok(g.homes.every((h) => h === 0));
+  assert.ok(g.players.every((_, s) => viewFor(g, s).home === 0));
+  // 1v1 still flips the top player's view.
+  assert.deepEqual(fresh().homes, [0, 2]);
 });
 
 test('rotation puts each player\'s home edge at the bottom', () => {
