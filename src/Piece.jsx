@@ -1,11 +1,24 @@
 import React from 'react';
 import SVGS from './pieceSvgs.js';
 
+// color: 'white' | 'black' (stock art) or a CSS hex colour (white art with its body fill swapped).
+const tinted = new Map();
+function pieceSrc(type, color) {
+  if (color === 'white' || color === 'black') return SVGS[`${color}_${type}`];
+  const key = `${type}${color}`;
+  if (!tinted.has(key)) {
+    const base = SVGS[`white_${type}`];
+    if (!base) return undefined;
+    const svg = atob(base.split(',')[1]).replaceAll('fill="#fff"', `fill="${color}"`);
+    tinted.set(key, `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  }
+  return tinted.get(key);
+}
+
 // Coin and garrison are drawn in the same style as the cburnett set (45×45, 1.5 stroke).
-export default function Piece({ type, owner }) {
-  const color = owner === 0 ? 'white' : 'black';
-  const fill = owner === 0 ? '#fff' : '#000';
-  const detail = owner === 0 ? '#000' : '#fff';
+export default function Piece({ type, color }) {
+  const fill = color === 'white' ? '#fff' : color === 'black' ? '#000' : color;
+  const detail = color === 'black' ? '#fff' : '#000';
   if (type === 'coin') {
     return (
       <svg className="piece" viewBox="0 0 45 45">
@@ -27,12 +40,12 @@ export default function Piece({ type, owner }) {
   if (type === 'superpawn') {
     return (
       <svg className="piece" viewBox="0 0 45 45">
-        <image href={SVGS[`${color}_pawn`]} width="45" height="45" />
+        <image href={pieceSrc('pawn', color)} width="45" height="45" />
         <path d="M16 10.5 14.8 2.5l4.1 3.6 3.6-5.1 3.6 5.1 4.1-3.6-1.2 8z" fill={fill} stroke="#000" strokeWidth="1.3" strokeLinejoin="round" />
       </svg>
     );
   }
-  const src = SVGS[`${color}_${type}`];
+  const src = pieceSrc(type, color);
   if (!src) return null;
   return <img className="piece" src={src} alt="" draggable="false" />;
 }

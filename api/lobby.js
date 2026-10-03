@@ -1,7 +1,7 @@
 import { db, handler, HttpError, cleanName } from './_lib/admin.js';
 import { newGame, viewFor } from './_lib/engine.js';
+import { MODES, MIN_PLAYERS } from '../shared/game.js';
 
-const CAPACITY = { '1v1': 2 };
 
 export default handler(async (uid, body) => {
   const { action } = body;
@@ -11,7 +11,7 @@ export default handler(async (uid, body) => {
   if (action === 'create') {
     const name = cleanName(body.serverName, 32);
     const player = cleanName(body.name);
-    const format = body.format in CAPACITY ? body.format : '1v1';
+    const format = body.format in MODES ? body.format : '1v1';
     if (!name || !player) throw new HttpError(400, 'name');
     const ref = db.collection('lobbies').doc();
     await ref.set({
@@ -35,7 +35,7 @@ export default handler(async (uid, body) => {
       const players = l.players.filter((p) => p.uid !== uid);
       if (players.length === l.players.length) {
         if (l.status !== 'waiting') throw new HttpError(409, 'started');
-        if (players.length >= CAPACITY[l.format]) throw new HttpError(409, 'full');
+        if (players.length >= MODES[l.format].max) throw new HttpError(409, 'full');
       }
       tx.update(ref, { players: [...players, { uid, name: player }] });
     });
@@ -61,8 +61,8 @@ export default handler(async (uid, body) => {
       const l = snap.data();
       if (l.hostId !== uid) throw new HttpError(403, 'host');
       if (l.status !== 'waiting') throw new HttpError(409, 'started');
-      if (l.players.length < CAPACITY[l.format]) throw new HttpError(409, 'players');
-      const g = newGame(l.players.slice(0, CAPACITY[l.format]), Date.now());
+      if (l.players.length < MIN_PLAYERS) throw new HttpError(409, 'players');
+      const g = newGame(l.players.slice(0, MODES[l.format].max), Date.now(), l.format);
       const gameRef = db.collection('games').doc(ref.id);
       tx.set(gameRef, g);
       g.players.forEach((pid, seat) => tx.set(gameRef.collection('views').doc(pid), viewFor(g, seat)));

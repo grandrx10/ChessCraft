@@ -3,6 +3,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db, api } from './firebase.js';
 import { NameModal, go } from './ui.jsx';
 import Game from './Game.jsx';
+import { MIN_PLAYERS, seatColor } from '../shared/game.js';
 
 export default function Room({ id, uid }) {
   const [lobby, setLobby] = useState(undefined);
@@ -30,7 +31,7 @@ export default function Room({ id, uid }) {
   }
 
   const isHost = lobby.hostId === uid;
-  const canStart = isHost && lobby.players.length >= 2;
+  const canStart = isHost && lobby.players.length >= MIN_PLAYERS;
 
   const leave = async () => {
     go('');
@@ -49,13 +50,15 @@ export default function Room({ id, uid }) {
         <span className="tag">{lobby.format}</span>
       </header>
       <ul className="list">
-        {lobby.players.map((p) => (
+        {lobby.players.map((p, seat) => (
           <li key={p.uid} className={`row ${p.uid === uid ? 'me' : ''}`}>
-            <span className={`dot ${p.uid === lobby.hostId ? 'host' : ''}`} />
+            {lobby.format === 'FFA'
+              ? <span className="dot" style={{ background: seatColor('FFA', seat) }} />
+              : <span className={`dot ${p.uid === lobby.hostId ? 'host' : ''}`} />}
             <span className="grow">{p.name}</span>
           </li>
         ))}
-        {Array.from({ length: Math.max(0, 2 - lobby.players.length) }, (_, i) => (
+        {Array.from({ length: Math.max(0, MIN_PLAYERS - lobby.players.length) }, (_, i) => (
           <li key={`empty${i}`} className="row ghost"><span className="dot" /><span className="pulse">·  ·  ·</span></li>
         ))}
       </ul>

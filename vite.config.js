@@ -8,9 +8,9 @@ function localApi() {
     apply: 'serve',
     configureServer(server) {
       Object.assign(process.env, loadEnv('development', process.cwd(), ''));
-      server.middlewares.use('/api', async (req, res) => {
+      server.middlewares.use('/api', async (req, res, next) => {
         const name = (req.url || '').split('?')[0].replace(/^\/+/, '');
-        if (!/^[a-z]+$/.test(name)) { res.statusCode = 404; return res.end(); }
+        if (!/^[a-z]+$/.test(name)) return next();
         let raw = '';
         for await (const chunk of req) raw += chunk;
         try { req.body = raw ? JSON.parse(raw) : {}; } catch { req.body = {}; }

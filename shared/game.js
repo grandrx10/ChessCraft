@@ -1,10 +1,19 @@
 // Pure game rules shared by the client (highlighting) and the API (validation).
-// Board: r 0..7 top→bottom, c 0..7. Seat 0 starts at the bottom (r 7), seat 1 at the top (r 0).
+// Board: r 0..size-1 top→bottom, c 0..size-1. `rules` = { mode: '1v1' | 'FFA', size }.
+// 1v1: seat 0 starts at the bottom, seat 1 at the top; pawns move forward and promote.
+// FFA: kings start spread around the edge; pawns have no direction (step orthogonally, capture diagonally).
 
-export const COST = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, coin: 3, garrison: 3 };
-export const SPAWNABLE = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'coin', 'garrison'];
-export const COOLDOWN = 5000;
-export const INCOME_MS = 10000;
+export const MODES = { '1v1': { max: 2 }, FFA: { max: 8 } };
+export const MIN_PLAYERS = 2;
+export const boardSize = (mode, players) => (mode === 'FFA' ? 6 + players : 8);
+
+const BASE_COST = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, coin: 3, garrison: 3 };
+export const costOf = (type, mode) => (type === 'pawn' && mode === 'FFA' ? 2 : BASE_COST[type]);
+export const SPAWNABLE = Object.keys(BASE_COST);
+
+export const COOLDOWN = 7000;
+export const KING_INCOME_MS = 10000;
+export const COIN_INCOME_MS = 12000;
 export const VISION = 4;
 export const SPAWN_RADIUS = 2;
 export const SLIDE = 4;
@@ -15,26 +24,24 @@ const DIAG = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
 const KNIGHT = [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]];
 
 export const dist = (a, b) => Math.max(Math.abs(a.r - b.r), Math.abs(a.c - b.c));
-export const inBounds = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
-export const forward = (seat) => (seat === 0 ? -1 : 1);
-export const backRank = (seat) => (seat === 0 ? 7 : 0);
-export const lastRank = (seat) => (seat === 0 ? 0 : 7);
+const inBounds = (size, r, c) => r >= 0 && r < size && c >= 0 && c < size;
 
-function grid(pieces) {
-  const g = new Map();
-  for (const p of pieces) g.set(p.r * 8 + p.c, p);
-  return g;
-}
+// 1v1 pawn direction helpers.
+export const forward = (seat) => (seat === 0 ? -1 : 1);
+export const backRank = (seat, size) => (seat === 0 ? size - 1 : 0);
+export const lastRank = (seat, size) => (seat === 0 ? 0 : size - 1);
 
 export const pieceAt = (pieces, r, c) => pieces.find((p) => p.r === r && p.c === c);
 
 // Squares piece p may move to (pseudo-legal; check never restricts moves).
-export function moves(p, pieces) {
-  const g = grid(pieces);
+export function moves(p, pieces, { mode, size }) {
+  const occ = new Map();
+  for (const q of pieces) occ.set(q.r * size + q.c, q);
+  const at = (r, c) => occ.get(r * size + c);
   const out = [];
   const add = (r, c) => {
-    if (!inBounds(r, c)) return false;
-    const q = g.get(r * 8 + c);
+    if (!inBounds(size, r, c)) return false;
+    const q = at(r, c);
     if (!q) { out.push({ r, c }); return true; }
     if (q.owner !== p.owner) out.push({ r, c });
     return false;
@@ -45,96 +52,147 @@ export function moves(p, pieces) {
     }
   };
   const step = (dirs) => { for (const [dr, dc] of dirs) add(p.r + dr, p.c + dc); };
+  const stepEmpty = (dirs) => {
+    for (const [dr, dc] of dirs) {
+      const r = p.r + dr, c = p.c + dc;
+      if (inBounds(size, r, c) && !at(r, c)) out.push({ r, c });
+    }
+  };
+  const captureOnly = (dirs) => {
+    for (const [dr, dc] of dirs) {
+      const r = p.r + dr, c = p.c + dc;
+      const q = inBounds(size, r, c) && at(r, c);
+      if (q && q.owner !== p.owner) out.push({ r, c });
+    }
+  };
 
   switch (p.type) {
     case 'rook': slide(ORTH); break;
     case 'bishop': slide(DIAG); break;
     case 'queen': slide([...ORTH, ...DIAG]); break;
-    case 'king':
-    case 'coin': step([...ORTH, ...DIAG]); break;
+    case 'king': step([...ORTH, ...DIAG]); break;
+    case 'coin': stepEmpty([...ORTH, ...DIAG]); break; // moves like a king, never captures
     case 'knight': step(KNIGHT); break;
-    case 'pawn': {
-      const f = forward(p.owner);
-      const r1 = p.r + f;
-      if (inBounds(r1, p.c) && !g.get(r1 * 8 + p.c)) {
-        out.push({ r: r1, c: p.c });
-        const r2 = r1 + f;
-        if (p.dbl && inBounds(r2, p.c) && !g.get(r2 * 8 + p.c)) out.push({ r: r2, c: p.c });
-      }
-      for (const dc of [-1, 1]) {
-        const q = inBounds(r1, p.c + dc) && g.get(r1 * 8 + p.c + dc);
-        if (q && q.owner !== p.owner) out.push({ r: r1, c: p.c + dc });
-      }
-      break;
-    }
-    case 'superpawn': {
-      // Promoted pawn: steps one square orthogonally onto empty squares, captures one square diagonally.
-      for (const [dr, dc] of ORTH) {
-        const r = p.r + dr, c = p.c + dc;
-        if (inBounds(r, c) && !g.get(r * 8 + c)) out.push({ r, c });
-      }
-      for (const [dr, dc] of DIAG) {
-        const r = p.r + dr, c = p.c + dc;
-        const q = inBounds(r, c) && g.get(r * 8 + c);
-        if (q && q.owner !== p.owner) out.push({ r, c });
+    case 'pawn':
+      if (mode === 'FFA') { stepEmpty(ORTH); captureOnly(DIAG); break; }
+      {
+        const f = forward(p.owner);
+        const r1 = p.r + f;
+        if (inBounds(size, r1, p.c) && !at(r1, p.c)) {
+          out.push({ r: r1, c: p.c });
+          const r2 = r1 + f;
+          if (p.dbl && inBounds(size, r2, p.c) && !at(r2, p.c)) out.push({ r: r2, c: p.c });
+        }
+        captureOnly([[f, -1], [f, 1]]);
       }
       break;
-    }
+    case 'superpawn': stepEmpty(ORTH); captureOnly(DIAG); break;
     default: break; // garrison: stationary
   }
   return out;
 }
 
-// 64-length boolean array of squares the seat can see.
-export function visibility(pieces, seat) {
+// size*size boolean array of squares the seat can see.
+export function visibility(pieces, seat, size) {
   const own = pieces.filter((p) => p.owner === seat);
-  const vis = new Array(64).fill(false);
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) vis[r * 8 + c] = own.some((p) => dist(p, { r, c }) <= VISION);
+  const vis = new Array(size * size).fill(false);
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) vis[r * size + c] = own.some((p) => dist(p, { r, c }) <= VISION);
   }
   return vis;
 }
 
-export function spawnSquares(pieces, seat, type) {
+export function spawnSquares(pieces, seat, type, { mode, size }) {
   const anchors = pieces.filter((p) => p.owner === seat && (p.type === 'king' || p.type === 'garrison'));
-  const g = grid(pieces);
   const out = [];
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      if (g.get(r * 8 + c)) continue;
-      if (type === 'pawn' && r === lastRank(seat)) continue;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (pieceAt(pieces, r, c)) continue;
+      if (type === 'pawn' && mode === '1v1' && r === lastRank(seat, size)) continue;
       if (anchors.some((a) => dist(a, { r, c }) <= SPAWN_RADIUS)) out.push({ r, c });
     }
   }
   return out;
 }
 
-export function inCheck(pieces, seat) {
+export function inCheck(pieces, seat, rules) {
   const king = pieces.find((p) => p.owner === seat && p.type === 'king');
   if (!king) return false;
-  return pieces.some((p) => p.owner !== seat && moves(p, pieces).some((m) => m.r === king.r && m.c === king.c));
+  return pieces.some((p) => p.owner !== seat && moves(p, pieces, rules).some((m) => m.r === king.r && m.c === king.c));
 }
 
 // Client-chosen piece ids, so optimistic spawns and confirmed spawns share an id.
 export const validPieceId = (id) => typeof id === 'string' && /^c[a-z0-9]{8,12}$/.test(id);
 
-export function makePiece(id, type, seat, r, c, now) {
+export function makePiece(id, type, seat, r, c, now, { mode, size }) {
   const piece = { id, type, owner: seat, r, c, readyAt: now + COOLDOWN, mv: 0 };
-  if (type === 'pawn' && (r === backRank(seat) || r === backRank(seat) + forward(seat))) piece.dbl = true;
+  if (type === 'pawn' && mode === '1v1' && (r === backRank(seat, size) || r === backRank(seat, size) + forward(seat))) {
+    piece.dbl = true;
+  }
   return piece;
 }
 
 // Result of moving p to (r, c): the moved piece and whatever it captured.
-export function resolveMove(pieces, p, r, c, now) {
+export function resolveMove(pieces, p, r, c, now, { mode, size }) {
   const target = pieceAt(pieces, r, c);
   const moved = { ...p, r, c, readyAt: now + COOLDOWN, mv: (p.mv || 0) + 1 };
   delete moved.dbl;
-  if (moved.type === 'pawn' && r === lastRank(p.owner)) moved.type = 'superpawn';
+  if (moved.type === 'pawn' && mode === '1v1' && r === lastRank(p.owner, size)) moved.type = 'superpawn';
   return { moved, target };
 }
 
-// Income sources: king + coins, 1 point per INCOME_MS each.
-export const incomeRate = (pieces, seat) =>
-  pieces.filter((p) => p.owner === seat && (p.type === 'king' || p.type === 'coin')).length;
+// Points per millisecond: each king 1 per KING_INCOME_MS, each coin 1 per COIN_INCOME_MS.
+export function incomeRate(pieces, seat) {
+  let rate = 0;
+  for (const p of pieces) {
+    if (p.owner !== seat) continue;
+    if (p.type === 'king') rate += 1 / KING_INCOME_MS;
+    else if (p.type === 'coin') rate += 1 / COIN_INCOME_MS;
+  }
+  return rate;
+}
 
-export const pointsAt = (econ, rate, now) => econ.p + (Math.max(0, now - econ.t) / INCOME_MS) * rate;
+export const pointsAt = (econ, rate, now) => econ.p + Math.max(0, now - econ.t) * rate;
+
+// FFA starts: kings evenly spaced around the perimeter (random rotation), each with the edge it
+// started on as "home" (0 bottom, 1 left, 2 top, 3 right) so its view can be rotated.
+export function perimeterStarts(n, size, rand = Math.random) {
+  const ring = [];
+  for (let c = 0; c < size - 1; c++) ring.push({ r: 0, c, home: 2 });
+  for (let r = 0; r < size - 1; r++) ring.push({ r, c: size - 1, home: 3 });
+  for (let c = size - 1; c > 0; c--) ring.push({ r: size - 1, c, home: 0 });
+  for (let r = size - 1; r > 0; r--) ring.push({ r, c: 0, home: 1 });
+  const L = ring.length;
+  const spread = (s) => {
+    let min = Infinity;
+    for (let i = 0; i < s.length; i++) for (let j = i + 1; j < s.length; j++) min = Math.min(min, dist(s[i], s[j]));
+    return min;
+  };
+  // Even spacing along the ring can bunch two kings around a corner, so search random
+  // rotations with each king nudged up to one square either way; keep the most spread out.
+  let best = null;
+  let bestSpread = -1;
+  for (let trial = 0; trial < 300; trial++) {
+    const offset = rand() * L;
+    const idx = Array.from({ length: n }, (_, i) => Math.floor(offset + (i * L) / n) + (trial ? Math.floor(rand() * 3) - 1 : 0));
+    const s = idx.map((x) => ring[((x % L) + L) % L]);
+    const sp = spread(s);
+    if (sp > bestSpread) { best = s; bestSpread = sp; }
+  }
+  return best;
+}
+
+// Maps a display cell (dr, dc) to a board cell for a viewer whose home edge is shown at the bottom.
+export function toBoard(dr, dc, home, size) {
+  const m = size - 1;
+  switch (home) {
+    case 1: return { r: dc, c: m - dr }; // left edge at the bottom
+    case 2: return { r: m - dr, c: m - dc }; // top edge at the bottom
+    case 3: return { r: m - dc, c: dr }; // right edge at the bottom
+    default: return { r: dr, c: dc };
+  }
+}
+
+export const FFA_COLORS = ['#e5484d', '#3b82f6', '#22c55e', '#facc15', '#a855f7', '#f97316', '#14b8a6', '#ec4899'];
+// 'white' / 'black' use the stock piece art; anything else is a fill colour.
+export const seatColor = (mode, seat) => (mode === 'FFA' ? FFA_COLORS[seat] : seat === 0 ? 'white' : 'black');

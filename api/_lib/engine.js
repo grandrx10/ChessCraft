@@ -1,6 +1,6 @@
 // Server-authoritative game mutations. Pure functions over a plain game object.
 import {
-  COST, START_POINTS, INCOME_MS,
+  START_POINTS, costOf, boardSize, perimeterStarts,
   moves, spawnSquares, incomeRate, visibility, backRank, makePiece, resolveMove, validPieceId,
 } from '../../shared/game.js';
 
@@ -12,16 +12,37 @@ export class RuleError extends Error {
 const COOLDOWN_SLACK = 250;
 
 const list = (g) => Object.values(g.pieces);
+export const rulesOf = (g) => ({ mode: g.mode || '1v1', size: g.size || 8 });
 
-export function newGame(players, now, rand = Math.random) {
+export function newGame(players, now, mode = '1v1', rand = Math.random) {
+  const n = players.length;
+  const size = boardSize(mode, n);
+  let starts;
+  if (mode === 'FFA') {
+    // Shuffle who gets which slot so seating isn't join order.
+    const slots = perimeterStarts(n, size, rand);
+    for (let i = slots.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [slots[i], slots[j]] = [slots[j], slots[i]];
+    }
+    starts = slots;
+  } else {
+    starts = players.map((_, seat) => ({
+      r: backRank(seat, size), c: rand() < 0.5 ? 0 : size - 1, home: seat === 0 ? 0 : 2,
+    }));
+  }
   const pieces = {};
-  players.forEach((_, seat) => {
+  starts.forEach(({ r, c }, seat) => {
     const id = `k${seat}`;
-    pieces[id] = { id, type: 'king', owner: seat, r: backRank(seat), c: rand() < 0.5 ? 0 : 7, readyAt: now, mv: 0 };
+    pieces[id] = { id, type: 'king', owner: seat, r, c, readyAt: now, mv: 0 };
   });
   return {
+    mode,
+    size,
     players: players.map((p) => p.uid),
     names: players.map((p) => p.name),
+    homes: starts.map((s) => s.home),
+    alive: players.map(() => true),
     pieces,
     econ: players.map(() => ({ p: START_POINTS, t: now })),
     status: 'playing',
@@ -34,47 +55,71 @@ export function newGame(players, now, rand = Math.random) {
 function settle(g, now) {
   const ps = list(g);
   g.econ.forEach((e, seat) => {
-    e.p += (Math.max(0, now - e.t) / INCOME_MS) * incomeRate(ps, seat);
+    e.p += Math.max(0, now - e.t) * incomeRate(ps, seat);
     e.t = now;
   });
 }
 
-export function spawn(g, seat, { id, type, r, c }, now) {
+function checkActive(g, seat) {
   if (g.status !== 'playing') throw new RuleError('over');
-  if (!(type in COST)) throw new RuleError('type');
+  if (g.alive && !g.alive[seat]) throw new RuleError('out');
+}
+
+export function spawn(g, seat, { id, type, r, c }, now) {
+  checkActive(g, seat);
+  const rules = rulesOf(g);
+  const cost = costOf(type, rules.mode);
+  if (!cost) throw new RuleError('type');
   if (!validPieceId(id) || g.pieces[id]) throw new RuleError('id');
   settle(g, now);
-  if (g.econ[seat].p < COST[type]) throw new RuleError('points');
-  if (!spawnSquares(list(g), seat, type).some((s) => s.r === r && s.c === c)) throw new RuleError('square');
-  g.econ[seat].p -= COST[type];
-  g.pieces[id] = makePiece(id, type, seat, r, c, now);
+  if (g.econ[seat].p < cost) throw new RuleError('points');
+  if (!spawnSquares(list(g), seat, type, rules).some((s) => s.r === r && s.c === c)) throw new RuleError('square');
+  g.econ[seat].p -= cost;
+  g.pieces[id] = makePiece(id, type, seat, r, c, now, rules);
 }
 
 export function move(g, seat, { pieceId, r, c }, now) {
-  if (g.status !== 'playing') throw new RuleError('over');
+  checkActive(g, seat);
+  const rules = rulesOf(g);
   const p = g.pieces[pieceId];
   if (!p || p.owner !== seat) throw new RuleError('piece');
   if (now < p.readyAt - COOLDOWN_SLACK) throw new RuleError('cooldown');
   const ps = list(g);
-  if (!moves(p, ps).some((m) => m.r === r && m.c === c)) throw new RuleError('illegal');
+  if (!moves(p, ps, rules).some((m) => m.r === r && m.c === c)) throw new RuleError('illegal');
   settle(g, now);
-  const { moved, target } = resolveMove(ps, p, r, c, now);
-  if (target) {
-    delete g.pieces[target.id];
-    if (target.type === 'king') { g.status = 'ended'; g.winner = seat; }
-  }
+  const { moved, target } = resolveMove(ps, p, r, c, now, rules);
+  if (target) delete g.pieces[target.id];
   g.pieces[p.id] = moved;
+  if (target?.type === 'king') eliminate(g, target.owner);
 }
 
-// What one seat is allowed to see. Everything is revealed once the game ends.
+// A captured king removes its owner and all their pieces; the last king standing wins.
+function eliminate(g, seat) {
+  if (!g.alive) g.alive = g.players.map(() => true);
+  g.alive[seat] = false;
+  for (const p of list(g)) if (p.owner === seat) delete g.pieces[p.id];
+  const left = g.alive.flatMap((a, s) => (a ? [s] : []));
+  if (left.length <= 1) {
+    g.status = 'ended';
+    g.winner = left[0] ?? null;
+  }
+}
+
+// What one seat is allowed to see. Eliminated players and finished games see everything.
 export function viewFor(g, seat) {
   const ps = list(g);
-  const vis = visibility(ps, seat);
-  const shown = g.status === 'ended' ? ps : ps.filter((p) => p.owner === seat || vis[p.r * 8 + p.c]);
+  const { mode, size } = rulesOf(g);
+  const alive = g.alive || g.players.map(() => true);
+  const all = g.status === 'ended' || !alive[seat];
+  const vis = all ? null : visibility(ps, seat, size);
   return {
     seat,
+    mode,
+    size,
+    home: (g.homes || [0, 2])[seat],
     names: g.names,
-    pieces: shown,
+    alive,
+    pieces: all ? ps : ps.filter((p) => p.owner === seat || vis[p.r * size + p.c]),
     econ: g.econ[seat],
     rate: incomeRate(ps, seat),
     status: g.status,

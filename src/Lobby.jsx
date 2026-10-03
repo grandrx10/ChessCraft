@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db, api, storedName } from './firebase.js';
 import { Modal, go } from './ui.jsx';
+import { MODES } from '../shared/game.js';
 
 const STALE_MS = 2 * 60 * 60 * 1000;
 
@@ -35,7 +36,7 @@ export default function Lobby() {
           <li key={s.id} className="row clickable" onClick={() => go(`#/s/${s.id}`)}>
             <span className="grow">{s.name}</span>
             <span className="tag">{s.format}</span>
-            <span className="muted">{s.players.length}/2</span>
+            <span className="muted">{s.players.length}/{MODES[s.format]?.max ?? 2}</span>
           </li>
         ))}
       </ul>
@@ -70,7 +71,7 @@ function CreateModal({ onClose }) {
         <input autoFocus maxLength={32} placeholder="Server" value={serverName} onChange={(e) => setServerName(e.target.value)} />
         <input maxLength={20} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
         <div className="seg">
-          {['1v1'].map((f) => (
+          {Object.keys(MODES).map((f) => (
             <button type="button" key={f} className={f === format ? 'on' : ''} onClick={() => setFormat(f)}>{f}</button>
           ))}
         </div>

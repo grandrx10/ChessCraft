@@ -3,9 +3,9 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db, api, serverNow } from './firebase.js';
 import { go } from './ui.jsx';
 import Piece from './Piece.jsx';
-import { applyPending, newPieceId, settled } from './optimistic.js';
+import { applyPending, newPieceId, settled, rulesOfView } from './optimistic.js';
 import {
-  COST, COOLDOWN, SPAWNABLE, moves, visibility, spawnSquares, inCheck, pointsAt, pieceAt,
+  costOf, seatColor, toBoard, COOLDOWN, SPAWNABLE, moves, visibility, spawnSquares, inCheck, pointsAt, pieceAt,
 } from '../shared/game.js';
 
 export default function Game({ id, uid }) {
@@ -13,6 +13,7 @@ export default function Game({ id, uid }) {
   const [pending, setPending] = useState([]);
   const [sel, setSel] = useState(null); // piece id
   const [spawnType, setSpawnType] = useState(null);
+  const [dismissed, setDismissed] = useState(false);
   const [, tick] = useState(0);
   const latest = useRef(null);
 
@@ -43,9 +44,11 @@ export default function Game({ id, uid }) {
   const derived = useMemo(() => {
     if (!view) return null;
     const { pieces, seat } = view;
+    const rules = rulesOfView(view);
     return {
-      vis: visibility(pieces, seat),
-      check: inCheck(pieces, seat),
+      rules,
+      vis: visibility(pieces, seat, rules.size),
+      check: inCheck(pieces, seat, rules),
       king: pieces.find((p) => p.owner === seat && p.type === 'king'),
     };
   }, [view]);
@@ -53,14 +56,20 @@ export default function Game({ id, uid }) {
   if (!view) return <div className="center"><div className="spinner" /></div>;
 
   const { pieces, seat, names, status, winner } = view;
+  const { rules } = derived;
+  const { mode, size } = rules;
+  const alive = view.alive || names.map(() => true);
   const now = serverNow();
   const points = Math.floor(pointsAt(view.econ, view.rate, now) + 1e-9);
   const ended = status === 'ended';
+  const out = !alive[seat];
+  const idle = ended || out;
+  const cost = (t) => costOf(t, mode);
   const ready = (p) => now >= p.readyAt;
 
   const selPiece = sel && pieces.find((p) => p.id === sel && p.owner === seat);
-  const targets = selPiece && ready(selPiece) && !ended ? moves(selPiece, pieces) : [];
-  const spawnSet = spawnType && !ended ? spawnSquares(pieces, seat, spawnType) : [];
+  const targets = selPiece && ready(selPiece) && !idle ? moves(selPiece, pieces, rules) : [];
+  const spawnSet = spawnType && !idle ? spawnSquares(pieces, seat, spawnType, rules) : [];
   const has = (list, r, c) => list.some((m) => m.r === r && m.c === c);
 
   // Apply locally right away. Either way the response carries the server's current view:
@@ -81,11 +90,11 @@ export default function Game({ id, uid }) {
   };
 
   const onSquare = (r, c) => {
-    if (ended) return;
+    if (idle) return;
     if (spawnType) {
       if (has(spawnSet, r, c)) {
         act({ kind: 'spawn', pieceId: newPieceId(), type: spawnType, r, c });
-        if (points - COST[spawnType] < COST[spawnType]) setSpawnType(null);
+        if (points - cost(spawnType) < cost(spawnType)) setSpawnType(null);
       } else setSpawnType(null);
       return;
     }
@@ -98,15 +107,14 @@ export default function Game({ id, uid }) {
     setSel(p && p.owner === seat && p.type !== 'garrison' && ready(p) && p.id !== sel ? p.id : null);
   };
 
-  // Seat 1 sees the board rotated so their side is at the bottom.
-  const flip = seat === 1;
+  // The board is rotated so this player's home edge is at the bottom.
+  const home = view.home ?? (seat === 1 ? 2 : 0);
   const squares = [];
-  for (let dr = 0; dr < 8; dr++) {
-    for (let dc = 0; dc < 8; dc++) {
-      const r = flip ? 7 - dr : dr;
-      const c = flip ? 7 - dc : dc;
+  for (let dr = 0; dr < size; dr++) {
+    for (let dc = 0; dc < size; dc++) {
+      const { r, c } = toBoard(dr, dc, home, size);
       const p = pieceAt(pieces, r, c);
-      const visible = ended || derived.vis[r * 8 + c];
+      const visible = idle || derived.vis[r * size + c];
       const cls = [
         'sq',
         (r + c) % 2 ? 'dark' : 'light',
@@ -114,37 +122,44 @@ export default function Game({ id, uid }) {
         has(spawnSet, r, c) && 'spawn',
         selPiece && selPiece.r === r && selPiece.c === c && 'sel',
         has(targets, r, c) && (p ? 'capture' : 'target'),
-        p && p.id === derived.king?.id && derived.check && !ended && 'check',
+        p && p.id === derived.king?.id && derived.check && !idle && 'check',
       ].filter(Boolean).join(' ');
       squares.push(
         <div key={`${r}-${c}`} className={cls} onMouseDown={() => onSquare(r, c)}>
-          {p && <Piece type={p.type} owner={p.owner} />}
+          {p && <Piece type={p.type} color={seatColor(mode, p.owner)} />}
           {p && p.owner === seat && now < p.readyAt + 800 && <Cooldown key={`${p.id}:${p.mv || 0}`} readyAt={p.readyAt} />}
         </div>,
       );
     }
   }
+  const track = `repeat(${size}, minmax(0, 1fr))`;
 
   return (
     <div className="game" onContextMenu={(e) => { e.preventDefault(); setSel(null); setSpawnType(null); }}>
-      <div className="player top"><span className={`swatch ${seat === 0 ? 'black' : 'white'}`} />{names[1 - seat]}</div>
-      <div className="board">{squares}</div>
-      <div className="player"><span className={`swatch ${seat === 0 ? 'white' : 'black'}`} />{names[seat]}<span className="grow" /><span className="points">{points}</span></div>
+      <div className="player top">
+        {names.map((n, s) => s !== seat && (
+          <span key={s} className={`opp ${alive[s] ? '' : 'dead'}`}><Swatch color={seatColor(mode, s)} />{n}</span>
+        ))}
+      </div>
+      <div className="board" style={{ gridTemplate: `${track} / ${track}` }}>{squares}</div>
+      <div className="player">
+        <Swatch color={seatColor(mode, seat)} />{names[seat]}<span className="grow" /><span className="points">{points}</span>
+      </div>
       <div className="units">
         {SPAWNABLE.map((t) => (
           <button
             key={t}
             className={`unit ${spawnType === t ? 'on' : ''}`}
-            disabled={ended || points < COST[t]}
+            disabled={idle || points < cost(t)}
             onClick={() => { setSel(null); setSpawnType(spawnType === t ? null : t); }}
           >
-            <Piece type={t} owner={seat} />
-            <span className="cost">{COST[t]}</span>
+            <Piece type={t} color={seatColor(mode, seat)} />
+            <span className="cost">{cost(t)}</span>
           </button>
         ))}
       </div>
-      {ended && (
-        <div className="backdrop soft">
+      {(ended || (out && !dismissed)) && (
+        <div className="backdrop soft" onMouseDown={(e) => !ended && e.target === e.currentTarget && setDismissed(true)}>
           <div className="modal result">
             <div className={`big ${winner === seat ? 'win' : 'lose'}`}>{winner === seat ? 'Victory' : 'Defeat'}</div>
             <button className="primary" onClick={() => go('')}>Lobby</button>
@@ -153,6 +168,11 @@ export default function Game({ id, uid }) {
       )}
     </div>
   );
+}
+
+function Swatch({ color }) {
+  const custom = color.startsWith('#');
+  return <span className={`swatch ${custom ? '' : color}`} style={custom ? { background: color, borderColor: color } : undefined} />;
 }
 
 // Red ring fills over the cooldown, flashes green when ready, then fades.

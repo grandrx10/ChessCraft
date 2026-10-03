@@ -100,7 +100,9 @@ button.wide { width: 100%; margin-top: 16px; padding: 12px; }
   gap: 10px; padding: 12px;
 }
 .player { width: var(--size); display: flex; align-items: center; gap: 10px; font-weight: 500; }
-.player.top { color: var(--muted); }
+.player.top { color: var(--muted); flex-wrap: wrap; column-gap: 18px; row-gap: 4px; }
+.opp { display: inline-flex; align-items: center; gap: 8px; }
+.opp.dead { opacity: .4; text-decoration: line-through; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); }
 .swatch.white { background: #fff; border-color: #a1a1aa; }
 .swatch.black { background: #27272a; border-color: #27272a; }
